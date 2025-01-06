@@ -1,7 +1,7 @@
 ## LoggerGraylogBackend
 
-This application provides a [Logger](https://hexdocs.pm/logger) backend for sendings log messages
-to Graylog. Currently only TCP transport is supported, and logs are always formatted in
+This application provides a [Logger](https://hexdocs.pm/logger) backend for sending log messages
+to Graylog. Currently, only TCP transport is supported, and logs are always formatted in
 [GELF](http://docs.graylog.org/en/stable/pages/gelf.html) format.
 
 ### Installation
@@ -16,7 +16,7 @@ end
 
 ### Usage
 
-First you need to tell `Logger` to install this backend:
+First, you need to tell `Logger` to install this backend:
 
 ```elixir
 config :logger, backends: [LoggerGraylogBackend.Tcp]
@@ -36,9 +36,9 @@ will try reconnecting indefinitely (with backoff).
 
 ### Backend configuration
 
-There are couple of configuration values you can provide to the backend:
+There are a couple of configuration values you can provide to the backend:
 
-* `:host` (**required**) - host name or IP address (basically everything accepted by `gen_tcp:connect/3`)
+* `:host` (**required**) - hostname or IP address (basically everything accepted by `gen_tcp:connect/3`)
    of the Graylog instance
 * `:port` (**required**) - port which the Graylog instance accepts TCP connections on
 * `:level` (**optional**, default: `info`) - the log level (`:debug`, `:info`, `:warn` or `:error`)
@@ -49,27 +49,27 @@ Logs sent by the backend are always in GELF 1.1 format. The following fields are
 payload by default:
 
 * `"version"` - always has value `"1.1"`
-* `"host"` - hostname retrieved using `inet:gethostname/0` (might be overriden)
-* `"timestamp"` - the log timestamp in seconds and milliseconds as fractional part (can be excluded)
+* `"host"` - hostname retrieved using `inet:gethostname/0` (might be overridden)
+* `"timestamp"` - the log timestamp in seconds and milliseconds as a fractional part (can be excluded)
 * `"short_message"` - the log message
 * `"level"` - the log severity formatted as a number as in [syslog](https://en.wikipedia.org/wiki/Syslog#Severity_level)
 
 In addition, all metadata provided by Logger will be included as additional fields (thus prefixed
 with `_`). What metadata is included in the message is also configurable.
 
-#### Conifugration
+#### Configuration
 
 You can configure the formatter using the following options:
 
 * `:include_timestamp` (default: `true`) - tells the formatted to include the `"timestamp"` field.
   Note that Graylog generates the timestamp itself if the incoming log message doesn't have it
 * `:override_host` (default: `false`)- if set, the `"host"` field in the GELF log will have the
-  configured value. Might be set to `false` to make the formatter use system hostname
+  configured value. It might be set to `false` to make the formatter use the system hostname
 * `:metadata` (default: `:all`) - filters what metadata will be included in the message, possible
   values are:
   * `:all` - all metadata
   * list of atoms - only metadata with keys present in the provided list
-  * `{module, function}` - a module/function pair which will be called when generatin the GELF
+  * `{module, function}` - a module/function pair which will be called when generating the GELF
     message. The function should take four arguments (log level, log message, timestamp and
     all metadata) and return the metadata which will be included in the message
 
