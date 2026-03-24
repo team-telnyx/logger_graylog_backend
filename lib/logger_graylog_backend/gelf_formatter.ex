@@ -63,14 +63,24 @@ defmodule LoggerGraylogBackend.GelfFormatter do
     end
   end
 
-  @spec format_level(Logger.level()) :: 7 | 6 | 4 | 3
-  defp format_level(:debug), do: 7
-  defp format_level(:info), do: 6
-  defp format_level(level) when level in ~w(warn warning)a, do: 4
+  # Map Elixir log levels to syslog severity levels
+  # See: https://en.wikipedia.org/wiki/Syslog#Severity_level
+  @spec format_level(Logger.level()) :: 0..7
+  defp format_level(:emergency), do: 0
+  defp format_level(:alert), do: 1
+  defp format_level(:critical), do: 2
   defp format_level(:error), do: 3
+  defp format_level(level) when level in ~w(warn warning)a, do: 4
+  defp format_level(:notice), do: 5
+  defp format_level(:info), do: 6
+  defp format_level(:debug), do: 7
+  # Fallback for unknown levels
+  defp format_level(_), do: 6
 
   @spec format_timestamp(timestamp) :: float
-  defp format_timestamp({{year, month, day}, {hour, min, sec, milli}}) do
+  # Standard Logger timestamp format: {{year, month, day}, {hour, min, sec, milli}}
+  defp format_timestamp({{year, month, day}, {hour, min, sec, milli}})
+       when is_integer(year) and is_integer(milli) do
     seconds =
       {{year, month, day}, {hour, min, sec}}
       |> NaiveDateTime.from_erl!()
@@ -78,6 +88,34 @@ defmodule LoggerGraylogBackend.GelfFormatter do
       |> DateTime.to_unix(:second)
 
     seconds + milli / 1000
+  end
+
+  # Handle timestamp without milliseconds
+  defp format_timestamp({{year, month, day}, {hour, min, sec}})
+       when is_integer(year) do
+    {{year, month, day}, {hour, min, sec}}
+    |> NaiveDateTime.from_erl!()
+    |> DateTime.from_naive!("Etc/UTC")
+    |> DateTime.to_unix(:second)
+    |> Kernel.+(0.0)
+  end
+
+  # Handle DateTime struct (Elixir 1.15+ might pass this in some cases)
+  defp format_timestamp(%DateTime{} = dt) do
+    DateTime.to_unix(dt, :millisecond) / 1000
+  end
+
+  # Handle NaiveDateTime struct
+  defp format_timestamp(%NaiveDateTime{} = ndt) do
+    ndt
+    |> DateTime.from_naive!("Etc/UTC")
+    |> DateTime.to_unix(:millisecond)
+    |> Kernel./(1000)
+  end
+
+  # Fallback: use current time if timestamp format is unrecognized
+  defp format_timestamp(_) do
+    DateTime.utc_now() |> DateTime.to_unix(:millisecond) |> Kernel./(1000)
   end
 
   ## Encoder implementation for pids

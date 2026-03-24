@@ -18,7 +18,8 @@ defmodule LoggerGraylogBackend.Tcp do
     include_timestamp: true
   ]
 
-  @levels [:debug, :info, :warn, :error]
+  # Support both old (:warn) and new (:warning) log levels for Elixir 1.15+ compatibility
+  @levels [:debug, :info, :notice, :warn, :warning, :error, :critical, :alert, :emergency]
   @backoff_start 2
   @backoff_max 30
 
@@ -88,11 +89,29 @@ defmodule LoggerGraylogBackend.Tcp do
     end
   end
 
+  # Handle events from remote nodes (gl is from a different node)
+  # In Elixir 1.15+, some events might come with different gl handling
+  def handle_event(
+        {level, _gl, {Logger, message, timestamp, metadata}},
+        %{socket: {:connected, _socket}} = state
+      ) do
+    with true <- should_log?(level, state),
+         :ok <- log(level, message, timestamp, metadata, state) do
+      {:ok, state}
+    else
+      :error ->
+        {:ok, try_connect(%{state | socket: :disconnected})}
+
+      _ ->
+        {:ok, state}
+    end
+  end
+
   def handle_event(_, %{socket: :disconnected} = state) do
     {:ok, state}
   end
 
-  def handle_event(_, state) do
+  def handle_event(_event, state) do
     {:ok, state}
   end
 
@@ -151,30 +170,76 @@ defmodule LoggerGraylogBackend.Tcp do
     metadata_to_send =
       extract_metadata(level, message, timestamp, metadata, state.metadata_filter)
 
-    log =
-      Formatter.format(
-        state.gelf_host,
-        level,
-        message,
-        timestamp,
-        metadata_to_send,
-        include_timestamp: include_timestamp
-      )
+    # Filter out non-encodable metadata values to prevent Jason encoding failures
+    safe_metadata = sanitize_metadata(metadata_to_send)
 
-    case :gen_tcp.send(socket, [log, 0]) do
-      :ok ->
-        :ok
+    try do
+      log =
+        Formatter.format(
+          state.gelf_host,
+          level,
+          message,
+          timestamp,
+          safe_metadata,
+          include_timestamp: include_timestamp
+        )
 
-      {:error, reason} ->
+      case :gen_tcp.send(socket, [log, 0]) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.error(fn ->
+            "Couldn't send log message to Graylog at #{format_endpoint(host, port)}: #{inspect(reason)}"
+          end)
+
+          :error
+      end
+    rescue
+      e ->
         Logger.error(fn ->
-          "Couldn't send log message to Graylog at #{format_endpoint(host, port)}: #{
-            inspect(reason)
-          }"
+          "Failed to format/send log message to Graylog: #{inspect(e)}"
         end)
 
         :error
     end
   end
+
+  # Sanitize metadata to ensure all values are JSON-encodable
+  defp sanitize_metadata(metadata) do
+    Enum.reduce(metadata, [], fn {key, value}, acc ->
+      case sanitize_value(value) do
+        {:ok, safe_value} -> [{key, safe_value} | acc]
+        :skip -> acc
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  defp sanitize_value(value) when is_binary(value), do: {:ok, value}
+  defp sanitize_value(value) when is_number(value), do: {:ok, value}
+  defp sanitize_value(value) when is_boolean(value), do: {:ok, value}
+  defp sanitize_value(value) when is_atom(value), do: {:ok, to_string(value)}
+  defp sanitize_value(value) when is_pid(value), do: {:ok, inspect(value)}
+  defp sanitize_value(value) when is_reference(value), do: {:ok, inspect(value)}
+  defp sanitize_value(value) when is_port(value), do: {:ok, inspect(value)}
+  defp sanitize_value(value) when is_function(value), do: {:ok, inspect(value)}
+  defp sanitize_value(value) when is_list(value) do
+    if List.ascii_printable?(value) do
+      {:ok, to_string(value)}
+    else
+      {:ok, inspect(value)}
+    end
+  end
+  defp sanitize_value(value) when is_tuple(value), do: {:ok, inspect(value)}
+  defp sanitize_value(value) when is_map(value) do
+    try do
+      {:ok, Jason.encode!(value) |> Jason.decode!()}
+    rescue
+      _ -> {:ok, inspect(value)}
+    end
+  end
+  defp sanitize_value(_value), do: :skip
 
   @spec extract_metadata(
           Logger.level(),
@@ -336,6 +401,8 @@ defmodule LoggerGraylogBackend.Tcp do
 
   @spec log_level?(term) :: boolean()
   defp log_level?(term) when term in @levels, do: true
+  # Also accept any atom that Logger.compare_levels/2 can handle
+  defp log_level?(term) when is_atom(term), do: true
   defp log_level?(_), do: false
 
   @spec metadata_opt?(term) :: boolean()
