@@ -148,9 +148,13 @@ defmodule LoggerGraylogBackend.Tcp do
 
   ## Helpers
 
+  # Normalize deprecated :warn to :warning (Elixir 1.15+)
+  defp normalize_level(:warn), do: :warning
+  defp normalize_level(level), do: level
+
   @spec should_log?(Logger.level(), state) :: boolean()
   defp should_log?(level, %{level: level_threshold}) do
-    Logger.compare_levels(level, level_threshold) != :lt
+    Logger.compare_levels(normalize_level(level), normalize_level(level_threshold)) != :lt
   end
 
   @spec log(Logger.level(), Logger.message(), Formatter.timestamp(), Logger.metadata(), state) ::
